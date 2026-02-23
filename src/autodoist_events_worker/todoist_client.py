@@ -21,7 +21,8 @@ class TodoistEventsClient:
         return resp.json()
 
     def list_comments_for_task(self, task_id: str) -> list[dict[str, Any]]:
-        # Todoist comments endpoint is paginated, but this first pass handles one page.
+        # Todoist returns {"results":[...], "next_cursor": "..."} for this endpoint.
+        # We currently process the first page only.
         resp = requests.get(
             f"{self.base_url}/comments",
             headers=self.headers,
@@ -32,6 +33,10 @@ class TodoistEventsClient:
         data = resp.json()
         if isinstance(data, list):
             return data
+        if isinstance(data, dict):
+            results = data.get("results")
+            if isinstance(results, list):
+                return results
         return []
 
     def delete_comment(self, comment_id: str) -> None:
