@@ -181,6 +181,8 @@ class ReminderNotifyRule:
             return [], {"reason": "missing_task_id"}
         if not ctx.config.reminder_webhook_url:
             return [], {"reason": "missing_webhook_url", "task_id": event.task_id}
+        if not ctx.config.reminder_webhook_token:
+            return [], {"reason": "missing_webhook_token", "task_id": event.task_id}
 
         task = ctx.todoist.get_task(event.task_id)
         task_content = str(task.get("content") or "").strip()
