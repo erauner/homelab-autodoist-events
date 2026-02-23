@@ -10,11 +10,24 @@ from autodoist_events_worker.rules import (
 
 
 class FakeTodoist:
-    def __init__(self, recurring: bool = True, labels: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        recurring: bool = True,
+        labels: list[str] | None = None,
+        due_datetime: str | None = None,
+        due_date: str | None = None,
+    ) -> None:
         self.recurring = recurring
         self.labels = labels if labels is not None else ["focus"]
+        self.due_datetime = due_datetime
+        self.due_date = due_date
 
     def get_task(self, task_id: str):
+        due_payload = {"is_recurring": self.recurring}
+        if self.due_date:
+            due_payload["date"] = self.due_date
+        if self.due_datetime:
+            due_payload["datetime"] = self.due_datetime
         return {
             "id": task_id,
             "content": "Focus task",
@@ -22,7 +35,7 @@ class FakeTodoist:
             "url": f"https://app.todoist.com/app/task/{task_id}",
             "labels": self.labels,
             "project_id": "p1",
-            "due": {"is_recurring": self.recurring},
+            "due": due_payload,
         }
 
     def list_comments_for_task(self, task_id: str):
@@ -199,6 +212,7 @@ def test_reminder_rule_plans_webhook_notification() -> None:
     assert meta["reminder_id"] == "rem-1"
     assert meta["policy_mode"] == "REMINDER_FOCUS"
     assert meta["policy_reason"] == "focused_reminder_task"
+    assert meta["message_mode"] == "REMINDER_FOCUS"
 
 
 def test_reminder_rule_skips_when_token_missing() -> None:
@@ -274,3 +288,38 @@ def test_reminder_rule_respects_cooldown() -> None:
     actions, meta = rule.plan(ctx, event)
     assert actions == []
     assert meta["reason"] == "cooldown_active"
+
+
+def test_reminder_rule_uses_prep_message_mode_before_due_datetime() -> None:
+    rule = ReminderNotifyRule()
+    cfg = EventsConfig(
+        todoist_api_token="x",
+        webhook_client_secret="y",
+        reminder_webhook_url="http://openclaw-main.ai.svc.cluster.local:18789/hooks/agent",
+        reminder_webhook_token="token",
+        reminder_channel="discord",
+        reminder_to="user:123",
+    )
+    todoist = FakeTodoist(
+        recurring=True,
+        labels=["focus"],
+        due_datetime="2099-01-01T17:00:00Z",
+        due_date="2099-01-01",
+    )
+    ctx = RuleContext(config=cfg, db=FakeDB(), todoist=todoist)
+    event = TodoistWebhookEvent(
+        delivery_id="d1",
+        event_name="reminder:fired",
+        user_id="u1",
+        triggered_at="2026-02-23T01:00:00Z",
+        task_id="parent",
+        project_id="p1",
+        update_intent=None,
+        reminder_id="rem-1",
+    )
+    actions, meta = rule.plan(ctx, event)
+    assert len(actions) == 1
+    assert meta["policy_mode"] == "REMINDER_FOCUS"
+    assert meta["message_mode"] == "ACTIVE_FOCUS_PREP_WINDOW"
+    payload = actions[0].meta["payload"]
+    assert "Mode=PREP_MODE" in payload["message"]

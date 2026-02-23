@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -179,6 +179,28 @@ class RecurringPurgeSubtasksOnCompletionRule:
 class ReminderNotifyRule:
     name = "reminder_notify"
 
+    @staticmethod
+    def _parse_due_date(value: str | None) -> date | None:
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _parse_due_datetime(value: str | None, tz_name: str) -> datetime | None:
+        if not value:
+            return None
+        try:
+            normalized = value.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(normalized)
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=ZoneInfo(tz_name))
+            return dt.astimezone(ZoneInfo(tz_name))
+        except Exception:
+            return None
+
     def matches(self, event: TodoistWebhookEvent) -> bool:
         return event.event_name == "reminder:fired" and event.task_id is not None
 
@@ -192,14 +214,22 @@ class ReminderNotifyRule:
 
         task = ctx.todoist.get_task(event.task_id)
         task_content = str(task.get("content") or "").strip()
+        due = task.get("due") or {}
         labels = task.get("labels") or []
         labels_lc = {str(x).strip().lower() for x in labels if str(x).strip()}
         has_focus = "focus" in labels_lc
+        due_date = self._parse_due_date(str(due.get("date")) if due.get("date") else None)
+        due_dt_local = self._parse_due_datetime(
+            str(due.get("datetime")) if due.get("datetime") else None,
+            ctx.config.reminder_timezone or "America/Chicago",
+        )
         task_ctx = TaskContext(
             id=str(event.task_id),
             content=task_content or str(event.task_id),
             labels=tuple(labels_lc),
             project_id=(str(task.get("project_id")) if task.get("project_id") is not None else None),
+            due_date=due_date,
+            due_datetime_local=due_dt_local,
             url=(str(task.get("url")) if task.get("url") else None),
         )
         try:
@@ -215,8 +245,9 @@ class ReminderNotifyRule:
                 reminder_task=task_ctx,
                 config=PolicyConfig(
                     require_focus_for_reminder=ctx.config.reminder_require_focus_label,
-                    allowed_hour_start=ctx.config.allowed_hour_start,
-                    allowed_hour_end=ctx.config.allowed_hour_end,
+                    # Reminder path should not inherit cron allowed-hour gates.
+                    allowed_hour_start=0,
+                    allowed_hour_end=24,
                 ),
             )
         )
@@ -245,11 +276,30 @@ class ReminderNotifyRule:
             reminder_task=task_ctx,
             config=PolicyConfig(
                 require_focus_for_reminder=ctx.config.reminder_require_focus_label,
-                allowed_hour_start=ctx.config.allowed_hour_start,
-                allowed_hour_end=ctx.config.allowed_hour_end,
+                allowed_hour_start=0,
+                allowed_hour_end=24,
             ),
         )
-        message = build_openclaw_message(decision, inp)
+        message_decision = decision
+        # Pre-due reminders should steer prep behavior, not pure execution.
+        if task_ctx.due_datetime_local is not None and task_ctx.due_datetime_local > now_local:
+            message_decision = type(decision)(
+                should_notify=decision.should_notify,
+                mode="ACTIVE_FOCUS_PREP_WINDOW",
+                reason="reminder_before_due_datetime",
+                focus_task_id=decision.focus_task_id,
+                candidate_task_ids=decision.candidate_task_ids,
+            )
+        elif task_ctx.due_date is not None and task_ctx.due_date > now_local.date():
+            message_decision = type(decision)(
+                should_notify=decision.should_notify,
+                mode="ACTIVE_FOCUS_PREP_WINDOW",
+                reason="reminder_before_due_date",
+                focus_task_id=decision.focus_task_id,
+                candidate_task_ids=decision.candidate_task_ids,
+            )
+
+        message = build_openclaw_message(message_decision, inp)
         target_to = ctx.config.reminder_to or ""
         payload = build_openclaw_hook_payload(
             message=message,
@@ -266,6 +316,8 @@ class ReminderNotifyRule:
             "triggered_at": event.triggered_at,
             "policy_mode": decision.mode,
             "policy_reason": decision.reason,
+            "message_mode": message_decision.mode,
+            "message_reason": message_decision.reason,
         }
         if not target_to:
             payload.pop("to", None)
@@ -278,6 +330,7 @@ class ReminderNotifyRule:
                 "task_id": event.task_id,
                 "event_name": event.event_name,
                 "policy_mode": decision.mode,
+                "message_mode": message_decision.mode,
                 "cooldown_minutes": int(ctx.config.reminder_cooldown_minutes),
                 "payload": payload,
             },
@@ -289,6 +342,8 @@ class ReminderNotifyRule:
             "has_focus_label": has_focus,
             "policy_mode": decision.mode,
             "policy_reason": decision.reason,
+            "message_mode": message_decision.mode,
+            "message_reason": message_decision.reason,
             "cooldown_minutes": int(ctx.config.reminder_cooldown_minutes),
             "dry_run": ctx.config.dry_run,
         }
