@@ -27,7 +27,10 @@ class EventsConfig:
     reminder_webhook_url: Optional[str] = None
     reminder_webhook_token: Optional[str] = None
     reminder_require_focus_label: bool = False
+    reminder_cooldown_minutes: int = 60
     reminder_timezone: str = "America/Chicago"
+    allowed_hour_start: int = 9
+    allowed_hour_end: int = 18
     reminder_channel: str = "discord"
     reminder_to: Optional[str] = None
     admin_token: Optional[str] = None
@@ -91,7 +94,10 @@ class EventsConfig:
             reminder_require_focus_label=parse_bool(
                 os.getenv("AUTODOIST_EVENTS_REMINDER_REQUIRE_FOCUS_LABEL"), False
             ),
+            reminder_cooldown_minutes=int(os.getenv("AUTODOIST_EVENTS_REMINDER_COOLDOWN_MINUTES", "60")),
             reminder_timezone=os.getenv("AUTODOIST_EVENTS_REMINDER_TIMEZONE", "America/Chicago"),
+            allowed_hour_start=int(os.getenv("AUTODOIST_EVENTS_ALLOWED_HOUR_START", "9")),
+            allowed_hour_end=int(os.getenv("AUTODOIST_EVENTS_ALLOWED_HOUR_END", "18")),
             reminder_channel=os.getenv("AUTODOIST_EVENTS_REMINDER_CHANNEL", "discord"),
             reminder_to=os.getenv("AUTODOIST_EVENTS_REMINDER_TO"),
             admin_token=args.admin_token or os.getenv("AUTODOIST_EVENTS_ADMIN_TOKEN"),

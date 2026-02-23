@@ -281,6 +281,11 @@ def create_app(config: EventsConfig) -> Flask:
                             payload=payload,
                             bearer_token=config.reminder_webhook_token,
                         )
+                        if rule.name == "reminder_notify":
+                            task_id = str(action.meta.get("task_id") or "")
+                            mode = str(action.meta.get("policy_mode") or "")
+                            if task_id and mode:
+                                db.mark_reminder_notify_sent(task_id, mode)
                         action.meta = {**action.meta, "response": response_meta}
                     else:
                         db.record_action(

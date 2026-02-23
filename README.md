@@ -44,6 +44,16 @@ Environment variables:
 - `AUTODOIST_EVENTS_DENIED_PROJECT_IDS` (CSV, optional)
 - `AUTODOIST_EVENTS_KEEP_MARKERS` (CSV, default: `[openclaw:plan]`)
 - `AUTODOIST_EVENTS_MAX_DELETE_COMMENTS` (default: `200`)
+- `AUTODOIST_EVENTS_RULE_REMINDER_NOTIFY` (default: `false`)
+- `AUTODOIST_EVENTS_REMINDER_WEBHOOK_URL` (required for reminder notify)
+- `AUTODOIST_EVENTS_REMINDER_WEBHOOK_TOKEN` (required for reminder notify)
+- `AUTODOIST_EVENTS_REMINDER_CHANNEL` (default: `discord`)
+- `AUTODOIST_EVENTS_REMINDER_TO` (optional destination override)
+- `AUTODOIST_EVENTS_REMINDER_REQUIRE_FOCUS_LABEL` (default: `false`)
+- `AUTODOIST_EVENTS_REMINDER_COOLDOWN_MINUTES` (default: `60`)
+- `AUTODOIST_EVENTS_REMINDER_TIMEZONE` (default: `America/Chicago`)
+- `AUTODOIST_EVENTS_ALLOWED_HOUR_START` (default: `9`)
+- `AUTODOIST_EVENTS_ALLOWED_HOUR_END` (default: `18`)
 - `AUTODOIST_EVENTS_ADMIN_TOKEN` (optional)
 
 ## Endpoints

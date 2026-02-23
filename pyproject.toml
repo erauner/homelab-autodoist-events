@@ -1,6 +1,6 @@
 [project]
 name = "homelab-autodoist-events"
-version = "0.1.0"
+version = "0.1.1"
 description = "Todoist webhook events worker for Autodoist"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -10,7 +10,7 @@ authors = [
 dependencies = [
   "Flask>=3.0.0",
   "requests>=2.31.0",
-  "homelab-todoist-core==0.1.0",
+  "homelab-todoist-core==0.1.1",
 ]
 
 [project.optional-dependencies]

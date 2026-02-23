@@ -31,3 +31,11 @@ def test_upsert_receipt_idempotent(tmp_path) -> None:
     )
     assert is_new2 is False
     assert row2["attempt_count"] == 2
+
+
+def test_reminder_notify_state_roundtrip(tmp_path) -> None:
+    db = EventsDB(str(tmp_path / "events.sqlite"), auto_commit=True)
+    db.connect()
+    assert db.get_last_reminder_notify_ms("t1", "REMINDER_FOCUS") is None
+    db.mark_reminder_notify_sent("t1", "REMINDER_FOCUS", sent_at_ms=12345)
+    assert db.get_last_reminder_notify_ms("t1", "REMINDER_FOCUS") == 12345

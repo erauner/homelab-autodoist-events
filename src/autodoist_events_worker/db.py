@@ -65,6 +65,13 @@ class EventsDB:
               meta_json TEXT,
               UNIQUE(delivery_id, action_type, target_id)
             );
+
+            CREATE TABLE IF NOT EXISTS reminder_notify_state (
+              task_id TEXT NOT NULL,
+              mode TEXT NOT NULL,
+              last_sent_at_ms INTEGER NOT NULL,
+              PRIMARY KEY(task_id, mode)
+            );
             """
         )
         if self._auto_commit:
@@ -187,3 +194,27 @@ class EventsDB:
             "SELECT * FROM action_outcomes WHERE delivery_id = ? ORDER BY id ASC", (delivery_id,)
         )
         return [dict(r) for r in cur.fetchall()]
+
+    def get_last_reminder_notify_ms(self, task_id: str, mode: str) -> Optional[int]:
+        cur = self.conn.execute(
+            "SELECT last_sent_at_ms FROM reminder_notify_state WHERE task_id = ? AND mode = ?",
+            (task_id, mode),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return int(row["last_sent_at_ms"])
+
+    def mark_reminder_notify_sent(self, task_id: str, mode: str, sent_at_ms: Optional[int] = None) -> None:
+        value = int(sent_at_ms if sent_at_ms is not None else int(time.time() * 1000))
+        self.conn.execute(
+            """
+            INSERT INTO reminder_notify_state (task_id, mode, last_sent_at_ms)
+            VALUES (?, ?, ?)
+            ON CONFLICT(task_id, mode) DO UPDATE SET
+              last_sent_at_ms = excluded.last_sent_at_ms
+            """,
+            (task_id, mode, value),
+        )
+        if self._auto_commit:
+            self.commit()

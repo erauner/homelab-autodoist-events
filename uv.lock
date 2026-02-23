@@ -133,7 +133,7 @@ wheels = [
 
 [[package]]
 name = "homelab-autodoist-events"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "flask" },
@@ -154,7 +154,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "flask", specifier = ">=3.0.0" },
-    { name = "homelab-todoist-core", specifier = "==0.1.0", index = "https://nexus.erauner.dev/repository/pypi-hosted/simple" },
+    { name = "homelab-todoist-core", specifier = "==0.1.1", index = "https://nexus.erauner.dev/repository/pypi-hosted/simple" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
 ]
@@ -165,11 +165,11 @@ dev = [{ name = "pytest", specifier = ">=8.0.0" }]
 
 [[package]]
 name = "homelab-todoist-core"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://nexus.erauner.dev/repository/pypi-hosted/simple" }
-sdist = { url = "https://nexus.erauner.dev/repository/pypi-hosted/packages/homelab-todoist-core/0.1.0/homelab_todoist_core-0.1.0.tar.gz", hash = "sha256:3de308850bfa2d5302e08b494e02878d97e9410e84643acafc2f9a319dc281ba" }
+sdist = { url = "https://nexus.erauner.dev/repository/pypi-hosted/packages/homelab-todoist-core/0.1.1/homelab_todoist_core-0.1.1.tar.gz", hash = "sha256:c94a748df36a77fbe8918dfe0b64ac78581d49afc296af776d70c0f890507845" }
 wheels = [
-    { url = "https://nexus.erauner.dev/repository/pypi-hosted/packages/homelab-todoist-core/0.1.0/homelab_todoist_core-0.1.0-py3-none-any.whl", hash = "sha256:9752bf7cbe1daf8fafce35b97e6da80417e99eca5cb3f692f822ea1f5468f09e" },
+    { url = "https://nexus.erauner.dev/repository/pypi-hosted/packages/homelab-todoist-core/0.1.1/homelab_todoist_core-0.1.1-py3-none-any.whl", hash = "sha256:19f6326ff8dc14403d7aa327ff114930054ac2819a7113b7658885eb6078e5d8" },
 ]
 
 [[package]]

@@ -4,6 +4,7 @@ from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from todoist_core.models import PolicyConfig, PolicyInput, TaskContext
+from todoist_core.payloads import build_openclaw_hook_payload, build_openclaw_message
 from todoist_core.policy import evaluate_focus_policy
 
 from .config import EventsConfig
@@ -191,8 +192,6 @@ class ReminderNotifyRule:
 
         task = ctx.todoist.get_task(event.task_id)
         task_content = str(task.get("content") or "").strip()
-        task_desc = str(task.get("description") or "").strip()
-        task_url = str(task.get("url") or "").strip()
         labels = task.get("labels") or []
         labels_lc = {str(x).strip().lower() for x in labels if str(x).strip()}
         has_focus = "focus" in labels_lc
@@ -201,6 +200,7 @@ class ReminderNotifyRule:
             content=task_content or str(event.task_id),
             labels=tuple(labels_lc),
             project_id=(str(task.get("project_id")) if task.get("project_id") is not None else None),
+            url=(str(task.get("url")) if task.get("url") else None),
         )
         try:
             now_local = datetime.now(ZoneInfo(ctx.config.reminder_timezone))
@@ -213,59 +213,62 @@ class ReminderNotifyRule:
                 focus_tasks=(),
                 next_action_tasks=(),
                 reminder_task=task_ctx,
-                # Keep reminder behavior parity with existing implementation:
-                # gate by focus requirement only; do not apply quiet-hour window here.
                 config=PolicyConfig(
                     require_focus_for_reminder=ctx.config.reminder_require_focus_label,
-                    allowed_hour_start=0,
-                    allowed_hour_end=24,
+                    allowed_hour_start=ctx.config.allowed_hour_start,
+                    allowed_hour_end=ctx.config.allowed_hour_end,
                 ),
             )
         )
         if not decision.should_notify:
             return [], {"reason": decision.reason, "task_id": event.task_id, "mode": decision.mode}
 
-        project_id = event.project_id or (str(task.get("project_id")) if task.get("project_id") is not None else None)
-        subtasks_direct = 0
-        if project_id:
-            tasks = ctx.todoist.list_active_tasks_for_project(str(project_id))
-            subtasks_direct = sum(1 for t in tasks if str(t.get("parent_id") or "") == str(event.task_id))
-
-        comments = ctx.todoist.list_comments_for_task(event.task_id)
-        recent_comments = [str(c.get("content") or "").strip() for c in comments if str(c.get("content") or "").strip()]
-        recent_comments = recent_comments[-3:]
-        comments_block = "\n".join(f"- {c}" for c in recent_comments) if recent_comments else "- (none)"
-
-        message_parts = [
-            "Todoist reminder fired.",
-            f"Task: {task_content or event.task_id}",
-        ]
-        if task_desc:
-            message_parts.append(f"Description: {task_desc}")
-        if labels:
-            message_parts.append(f"Labels: {', '.join(str(x) for x in labels)}")
-        message_parts.append(f"Direct subtasks open: {subtasks_direct}")
-        message_parts.append(f"Recent comments:\n{comments_block}")
-        if task_url:
-            message_parts.append(f"Task URL: {task_url}")
-        message_parts.append("Please provide a concise nudge and next concrete step.")
-
-        payload: dict[str, Any] = {
-            "message": "\n".join(message_parts),
-            "name": "Todoist Reminder",
-            "deliver": True,
-            "channel": ctx.config.reminder_channel or "discord",
-            "meta": {
-                "source": "autodoist-events-worker",
-                "event_name": event.event_name,
+        task_id = str(event.task_id)
+        last_sent_ms = ctx.db.get_last_reminder_notify_ms(task_id, decision.mode)
+        cooldown_ms = max(0, int(ctx.config.reminder_cooldown_minutes)) * 60_000
+        now_ms = int(now_local.timestamp() * 1000)
+        if last_sent_ms is not None and cooldown_ms > 0 and (now_ms - last_sent_ms) < cooldown_ms:
+            return [], {
+                "reason": "cooldown_active",
                 "task_id": event.task_id,
-                "project_id": project_id,
-                "reminder_id": event.reminder_id,
-                "triggered_at": event.triggered_at,
-            },
+                "mode": decision.mode,
+                "cooldown_minutes": int(ctx.config.reminder_cooldown_minutes),
+                "last_sent_at_ms": last_sent_ms,
+            }
+
+        project_id = event.project_id or (str(task.get("project_id")) if task.get("project_id") is not None else None)
+        inp = PolicyInput(
+            source="reminder",
+            now_local=now_local,
+            focus_tasks=(task_ctx,),
+            next_action_tasks=(),
+            reminder_task=task_ctx,
+            config=PolicyConfig(
+                require_focus_for_reminder=ctx.config.reminder_require_focus_label,
+                allowed_hour_start=ctx.config.allowed_hour_start,
+                allowed_hour_end=ctx.config.allowed_hour_end,
+            ),
+        )
+        message = build_openclaw_message(decision, inp)
+        target_to = ctx.config.reminder_to or ""
+        payload = build_openclaw_hook_payload(
+            message=message,
+            to=target_to,
+            channel=ctx.config.reminder_channel or "discord",
+            name="Focus Follow-up",
+        )
+        payload["meta"] = {
+            "source": "autodoist-events-worker",
+            "event_name": event.event_name,
+            "task_id": event.task_id,
+            "project_id": project_id,
+            "reminder_id": event.reminder_id,
+            "triggered_at": event.triggered_at,
+            "policy_mode": decision.mode,
+            "policy_reason": decision.reason,
         }
-        if ctx.config.reminder_to:
-            payload["to"] = ctx.config.reminder_to
+        if not target_to:
+            payload.pop("to", None)
 
         action = Action(
             action_type="notify_webhook",
@@ -274,6 +277,8 @@ class ReminderNotifyRule:
             meta={
                 "task_id": event.task_id,
                 "event_name": event.event_name,
+                "policy_mode": decision.mode,
+                "cooldown_minutes": int(ctx.config.reminder_cooldown_minutes),
                 "payload": payload,
             },
         )
@@ -284,8 +289,7 @@ class ReminderNotifyRule:
             "has_focus_label": has_focus,
             "policy_mode": decision.mode,
             "policy_reason": decision.reason,
-            "comments_included": len(recent_comments),
-            "direct_subtasks_open": subtasks_direct,
+            "cooldown_minutes": int(ctx.config.reminder_cooldown_minutes),
             "dry_run": ctx.config.dry_run,
         }
 

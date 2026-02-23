@@ -41,7 +41,14 @@ class FakeTodoist:
 
 
 class FakeDB:
-    pass
+    def __init__(self) -> None:
+        self.sent: dict[tuple[str, str], int] = {}
+
+    def get_last_reminder_notify_ms(self, task_id: str, mode: str):
+        return self.sent.get((task_id, mode))
+
+    def mark_reminder_notify_sent(self, task_id: str, mode: str, sent_at_ms: int | None = None):
+        self.sent[(task_id, mode)] = int(sent_at_ms or 0)
 
 
 def _config() -> EventsConfig:
@@ -186,7 +193,9 @@ def test_reminder_rule_plans_webhook_notification() -> None:
     payload = actions[0].meta["payload"]
     assert payload["channel"] == "discord"
     assert payload["to"] == "user:123"
-    assert "Todoist reminder fired" in payload["message"]
+    assert "Run the unified focus orchestrator check-in using tools first" in payload["message"]
+    assert "mode=REMINDER_FOCUS" in payload["message"]
+    assert payload["name"] == "Focus Follow-up"
     assert meta["reminder_id"] == "rem-1"
     assert meta["policy_mode"] == "REMINDER_FOCUS"
     assert meta["policy_reason"] == "focused_reminder_task"
@@ -238,3 +247,30 @@ def test_reminder_rule_skips_without_focus_when_required() -> None:
     actions, meta = rule.plan(ctx, event)
     assert actions == []
     assert meta["reason"] == "reminder_task_not_focused"
+
+
+def test_reminder_rule_respects_cooldown() -> None:
+    rule = ReminderNotifyRule()
+    cfg = EventsConfig(
+        todoist_api_token="x",
+        webhook_client_secret="y",
+        reminder_webhook_url="http://openclaw-main.ai.svc.cluster.local:18789/hooks/agent",
+        reminder_webhook_token="token",
+        reminder_cooldown_minutes=60,
+    )
+    db = FakeDB()
+    db.sent[("parent", "REMINDER_FOCUS")] = 9999999999999  # future-ish so always inside cooldown for test
+    ctx = RuleContext(config=cfg, db=db, todoist=FakeTodoist(recurring=True))
+    event = TodoistWebhookEvent(
+        delivery_id="d1",
+        event_name="reminder:fired",
+        user_id="u1",
+        triggered_at="2026-02-23T01:00:00Z",
+        task_id="parent",
+        project_id="p1",
+        update_intent=None,
+        reminder_id="rem-1",
+    )
+    actions, meta = rule.plan(ctx, event)
+    assert actions == []
+    assert meta["reason"] == "cooldown_active"
