@@ -40,3 +40,25 @@ class TodoistEventsClient:
         )
         if resp.status_code not in (200, 204):
             resp.raise_for_status()
+
+    def exchange_oauth_code(
+        self,
+        *,
+        code: str,
+        client_id: str,
+        client_secret: str,
+        redirect_uri: str,
+    ) -> dict[str, Any]:
+        # Todoist OAuth token exchange endpoint.
+        resp = requests.post(
+            "https://todoist.com/oauth/access_token",
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "redirect_uri": redirect_uri,
+            },
+            timeout=self.timeout_s,
+        )
+        resp.raise_for_status()
+        return resp.json()

@@ -10,6 +10,8 @@ from todoist_automation_shared import parse_bool, parse_csv_set
 class EventsConfig:
     todoist_api_token: str
     webhook_client_secret: str
+    todoist_client_id: Optional[str] = None
+    oauth_redirect_uri: Optional[str] = None
     db_path: str = "events.sqlite"
     enabled: bool = True
     dry_run: bool = False
@@ -29,6 +31,8 @@ class EventsConfig:
         parser = argparse.ArgumentParser(description="Autodoist events worker")
         parser.add_argument("--api-key")
         parser.add_argument("--webhook-secret")
+        parser.add_argument("--client-id")
+        parser.add_argument("--oauth-redirect-uri")
         parser.add_argument("--db-path")
         parser.add_argument("--host")
         parser.add_argument("--port", type=int)
@@ -52,6 +56,9 @@ class EventsConfig:
         return cls(
             todoist_api_token=api_key,
             webhook_client_secret=secret,
+            todoist_client_id=args.client_id or os.getenv("TODOIST_CLIENT_ID"),
+            oauth_redirect_uri=args.oauth_redirect_uri
+            or os.getenv("AUTODOIST_EVENTS_OAUTH_REDIRECT_URI"),
             db_path=args.db_path or os.getenv("AUTODOIST_EVENTS_DB_PATH", "events.sqlite"),
             enabled=parse_bool(os.getenv("AUTODOIST_EVENTS_ENABLED"), True),
             dry_run=parse_bool(os.getenv("AUTODOIST_EVENTS_DRY_RUN"), False),

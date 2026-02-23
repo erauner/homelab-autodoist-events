@@ -37,19 +37,74 @@ def create_app(config: EventsConfig) -> Flask:
     @app.get("/oauth/callback")
     def oauth_callback() -> Any:
         # OAuth redirect landing endpoint used for Todoist app installation flow.
-        code_present = bool(request.args.get("code"))
+        code = request.args.get("code", "")
+        code_present = bool(code)
         state_present = bool(request.args.get("state"))
         LOG.info(
             "oauth_callback_received code_present=%s state_present=%s",
             code_present,
             state_present,
         )
+
+        if not code_present:
+            return jsonify(
+                {
+                    "ok": False,
+                    "message": "Missing OAuth code in callback.",
+                    "code_present": False,
+                    "state_present": state_present,
+                    "oauth_exchanged": False,
+                }
+            ), 400
+
+        if not config.todoist_client_id or not config.oauth_redirect_uri:
+            LOG.error(
+                "oauth_callback_config_missing client_id_present=%s redirect_uri_present=%s",
+                bool(config.todoist_client_id),
+                bool(config.oauth_redirect_uri),
+            )
+            return jsonify(
+                {
+                    "ok": False,
+                    "message": "OAuth callback reached but worker is missing TODOIST_CLIENT_ID or AUTODOIST_EVENTS_OAUTH_REDIRECT_URI.",
+                    "code_present": True,
+                    "state_present": state_present,
+                    "oauth_exchanged": False,
+                }
+            ), 500
+
+        try:
+            token_payload = todoist.exchange_oauth_code(
+                code=code,
+                client_id=config.todoist_client_id,
+                client_secret=config.webhook_client_secret,
+                redirect_uri=config.oauth_redirect_uri,
+            )
+            token_present = bool(token_payload.get("access_token"))
+            LOG.info(
+                "oauth_callback_exchanged token_present=%s scope=%s",
+                token_present,
+                token_payload.get("scope"),
+            )
+        except Exception:
+            LOG.exception("oauth_callback_exchange_failed")
+            return jsonify(
+                {
+                    "ok": False,
+                    "message": "OAuth callback reached, but token exchange failed.",
+                    "code_present": True,
+                    "state_present": state_present,
+                    "oauth_exchanged": False,
+                }
+            ), 502
+
         return jsonify(
             {
                 "ok": True,
-                "message": "Autodoist events worker OAuth callback received.",
+                "message": "Autodoist events worker OAuth callback received and token exchanged.",
                 "code_present": code_present,
                 "state_present": state_present,
+                "oauth_exchanged": True,
             }
         ), 200
 
