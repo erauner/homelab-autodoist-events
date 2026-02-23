@@ -10,7 +10,7 @@ authors = [
 dependencies = [
   "Flask>=3.0.0",
   "requests>=2.31.0",
-  "homelab-todoist-core==0.1.1",
+  "homelab-todoist-core==0.1.2",
 ]
 
 [project.optional-dependencies]
