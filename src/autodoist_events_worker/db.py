@@ -13,7 +13,9 @@ class EventsDB:
     def connect(self) -> None:
         if self._conn is not None:
             return
-        self._conn = sqlite3.connect(self._db_path)
+        # Flask may serve requests from different threads; allow shared connection usage.
+        # We run single-replica for this service, and keep WAL + busy_timeout enabled.
+        self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
