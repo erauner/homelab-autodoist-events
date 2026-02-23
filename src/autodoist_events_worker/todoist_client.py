@@ -63,6 +63,22 @@ class TodoistEventsClient:
                 return results
         return []
 
+    def list_all_active_tasks(self) -> list[dict[str, Any]]:
+        resp = requests.get(
+            f"{self.base_url}/tasks",
+            headers=self.headers,
+            timeout=self.timeout_s,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            results = data.get("results")
+            if isinstance(results, list):
+                return results
+        return []
+
     def delete_task(self, task_id: str) -> None:
         resp = requests.delete(
             f"{self.base_url}/tasks/{task_id}", headers=self.headers, timeout=self.timeout_s

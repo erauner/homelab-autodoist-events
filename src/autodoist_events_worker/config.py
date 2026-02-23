@@ -33,6 +33,17 @@ class EventsConfig:
     allowed_hour_end: int = 18
     reminder_channel: str = "discord"
     reminder_to: Optional[str] = None
+    internal_token: Optional[str] = None
+    cron_timezone: str = "America/Chicago"
+    cron_allowed_hour_start: int = 9
+    cron_allowed_hour_end: int = 18
+    cron_prep_window_minutes: int = 180
+    cron_exec_active_minutes: tuple[int, ...] = (0,)
+    cron_prep_active_minutes: tuple[int, ...] = (0,)
+    cron_exec_active_hour_interval: int = 3
+    cron_prep_active_hour_interval: int = 1
+    cron_no_focus_tether_times: tuple[str, ...] = ("09:15", "13:30", "16:45")
+    cron_enable_no_focus_tether: bool = True
     admin_token: Optional[str] = None
     host: str = "0.0.0.0"
     port: int = 8081
@@ -64,6 +75,21 @@ class EventsConfig:
 
         markers = os.getenv("AUTODOIST_EVENTS_KEEP_MARKERS", "[openclaw:plan]")
         keep_markers = tuple(x.strip() for x in markers.split(",") if x.strip())
+        exec_active_minutes = tuple(
+            int(x.strip())
+            for x in os.getenv("AUTODOIST_EVENTS_CRON_EXEC_ACTIVE_MINUTES", "0").split(",")
+            if x.strip()
+        )
+        prep_active_minutes = tuple(
+            int(x.strip())
+            for x in os.getenv("AUTODOIST_EVENTS_CRON_PREP_ACTIVE_MINUTES", "0").split(",")
+            if x.strip()
+        )
+        no_focus_tether_times = tuple(
+            x.strip()
+            for x in os.getenv("AUTODOIST_EVENTS_CRON_NO_FOCUS_TETHER_TIMES", "09:15,13:30,16:45").split(",")
+            if x.strip()
+        )
 
         return cls(
             todoist_api_token=api_key,
@@ -100,6 +126,23 @@ class EventsConfig:
             allowed_hour_end=int(os.getenv("AUTODOIST_EVENTS_ALLOWED_HOUR_END", "18")),
             reminder_channel=os.getenv("AUTODOIST_EVENTS_REMINDER_CHANNEL", "discord"),
             reminder_to=os.getenv("AUTODOIST_EVENTS_REMINDER_TO"),
+            internal_token=os.getenv("AUTODOIST_EVENTS_INTERNAL_TOKEN"),
+            cron_timezone=os.getenv("AUTODOIST_EVENTS_CRON_TIMEZONE", "America/Chicago"),
+            cron_allowed_hour_start=int(os.getenv("AUTODOIST_EVENTS_CRON_ALLOWED_HOUR_START", "9")),
+            cron_allowed_hour_end=int(os.getenv("AUTODOIST_EVENTS_CRON_ALLOWED_HOUR_END", "18")),
+            cron_prep_window_minutes=int(os.getenv("AUTODOIST_EVENTS_CRON_PREP_WINDOW_MINUTES", "180")),
+            cron_exec_active_minutes=exec_active_minutes or (0,),
+            cron_prep_active_minutes=prep_active_minutes or (0,),
+            cron_exec_active_hour_interval=max(
+                1, int(os.getenv("AUTODOIST_EVENTS_CRON_EXEC_ACTIVE_HOUR_INTERVAL", "3"))
+            ),
+            cron_prep_active_hour_interval=max(
+                1, int(os.getenv("AUTODOIST_EVENTS_CRON_PREP_ACTIVE_HOUR_INTERVAL", "1"))
+            ),
+            cron_no_focus_tether_times=no_focus_tether_times or ("09:15", "13:30", "16:45"),
+            cron_enable_no_focus_tether=parse_bool(
+                os.getenv("AUTODOIST_EVENTS_CRON_ENABLE_NO_FOCUS_TETHER"), True
+            ),
             admin_token=args.admin_token or os.getenv("AUTODOIST_EVENTS_ADMIN_TOKEN"),
             host=args.host or os.getenv("AUTODOIST_EVENTS_HOST", "0.0.0.0"),
             port=args.port or int(os.getenv("AUTODOIST_EVENTS_PORT", "8081")),

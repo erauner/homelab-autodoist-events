@@ -1,11 +1,18 @@
 import hashlib
 import json
 import logging
+import uuid
+from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, request
 
 from todoist_automation_shared import verify_todoist_signature
+from todoist_core.models import PolicyConfig, PolicyInput, TaskContext
+from todoist_core.parsing import parse_due_date, parse_due_datetime_local
+from todoist_core.payloads import build_openclaw_hook_payload, build_openclaw_message
+from todoist_core.policy import evaluate_focus_policy
 
 from .config import EventsConfig
 from .db import EventsDB
@@ -27,6 +34,41 @@ def _is_admin_allowed(config: EventsConfig, auth_header: str | None) -> bool:
     if not auth_header:
         return False
     return auth_header.strip() == f"Bearer {config.admin_token}"
+
+
+def _is_internal_allowed(config: EventsConfig, auth_header: str | None) -> bool:
+    # If no internal token configured, allow internal trigger calls from in-cluster callers.
+    # When token is set, require exact bearer match.
+    if not config.internal_token:
+        return True
+    if not auth_header:
+        return False
+    return auth_header.strip() == f"Bearer {config.internal_token}"
+
+
+def _parse_updated_at_local(raw: object, tz_name: str) -> datetime | None:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo(tz_name))
+        return dt.astimezone(ZoneInfo(tz_name))
+    except Exception:
+        return None
+
+
+def _coerce_bool(value: object, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def create_app(config: EventsConfig) -> Flask:
@@ -128,6 +170,163 @@ def create_app(config: EventsConfig) -> Flask:
         if receipt is None:
             return jsonify({"ok": False, "error": "not_found"}), 404
         return jsonify({"ok": True, "receipt": receipt, "actions": db.list_actions(delivery_id)})
+
+    @app.post("/internal/trigger")
+    def internal_trigger() -> Any:
+        if not _is_internal_allowed(config, request.headers.get("Authorization")):
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+        body = request.get_json(silent=True) or {}
+        source = str(body.get("source") or "cron_fallback")
+        deliver = _coerce_bool(body.get("deliver"), True)
+        dry_run = _coerce_bool(body.get("dry_run"), False)
+        if source != "cron_fallback":
+            return jsonify({"ok": False, "error": "unsupported_source"}), 400
+
+        try:
+            now_local = datetime.now(ZoneInfo(config.cron_timezone))
+        except Exception:
+            now_local = datetime.now(ZoneInfo("America/Chicago"))
+
+        tasks = todoist.list_all_active_tasks()
+        focus_tasks: list[TaskContext] = []
+        next_action_tasks: list[TaskContext] = []
+        for task in tasks:
+            due = task.get("due") or {}
+            labels_raw = task.get("labels") or []
+            labels = tuple(str(x).strip().lower() for x in labels_raw if str(x).strip())
+            ctx_task = TaskContext(
+                id=str(task.get("id") or ""),
+                content=str(task.get("content") or "").strip(),
+                labels=labels,
+                project_id=(str(task.get("project_id")) if task.get("project_id") is not None else None),
+                due_date=parse_due_date(due.get("date")),
+                due_datetime_local=parse_due_datetime_local(due.get("datetime"), config.cron_timezone),
+                priority=int(task.get("priority") or 1),
+                updated_at=_parse_updated_at_local(task.get("updated_at"), config.cron_timezone),
+                url=(str(task.get("url")) if task.get("url") else None),
+            )
+            if "focus" in labels:
+                focus_tasks.append(ctx_task)
+            if "next_action" in labels:
+                next_action_tasks.append(ctx_task)
+
+        policy_cfg = PolicyConfig(
+            timezone=config.cron_timezone,
+            allowed_hour_start=config.cron_allowed_hour_start,
+            allowed_hour_end=config.cron_allowed_hour_end,
+            prep_window_minutes=config.cron_prep_window_minutes,
+            no_focus_tether_times=(
+                config.cron_no_focus_tether_times if config.cron_enable_no_focus_tether else ()
+            ),
+            exec_active_minutes=config.cron_exec_active_minutes,
+            prep_active_minutes=config.cron_prep_active_minutes,
+            exec_active_hour_interval=config.cron_exec_active_hour_interval,
+            prep_active_hour_interval=config.cron_prep_active_hour_interval,
+        )
+        inp = PolicyInput(
+            source="cron",
+            now_local=now_local,
+            focus_tasks=tuple(focus_tasks),
+            next_action_tasks=tuple(next_action_tasks),
+            reminder_task=None,
+            config=policy_cfg,
+        )
+        decision = evaluate_focus_policy(inp)
+
+        now_utc = datetime.now(UTC)
+        audit_id = f"internal-{now_utc.strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+        db.upsert_receipt(
+            delivery_id=audit_id,
+            event_name="internal:trigger",
+            user_id=None,
+            triggered_at=now_utc.isoformat().replace("+00:00", "Z"),
+            entity_type="internal",
+            entity_id=None,
+            project_id=None,
+            status="processing",
+            payload_sha256=None,
+        )
+        summary: dict[str, Any] = {
+            "source": source,
+            "deliver": deliver,
+            "dry_run": dry_run,
+            "decision": {
+                "should_notify": decision.should_notify,
+                "mode": decision.mode,
+                "reason": decision.reason,
+            },
+        }
+
+        delivery: dict[str, Any] = {"sent": False}
+        if decision.should_notify and deliver:
+            if not config.reminder_webhook_url or not config.reminder_webhook_token:
+                summary["delivery"] = {"sent": False, "reason": "missing_webhook_config"}
+            else:
+                message = build_openclaw_message(decision, inp)
+                payload = build_openclaw_hook_payload(
+                    message=message,
+                    to=(config.reminder_to or ""),
+                    channel=config.reminder_channel or "discord",
+                    name="Focus Follow-up",
+                )
+                if not config.reminder_to:
+                    payload.pop("to", None)
+                payload["deliver"] = bool(deliver)
+                payload["meta"] = {
+                    "source": source,
+                    "policy_mode": decision.mode,
+                    "policy_reason": decision.reason,
+                }
+                if dry_run:
+                    summary["delivery"] = {"sent": False, "reason": "dry_run"}
+                else:
+                    response_meta = todoist.post_webhook(
+                        url=config.reminder_webhook_url,
+                        payload=payload,
+                        bearer_token=config.reminder_webhook_token,
+                    )
+                    status_code = int(response_meta.get("status_code") or 0)
+                    db.record_action(
+                        audit_id,
+                        "internal_trigger",
+                        "notify_webhook",
+                        "webhook",
+                        config.reminder_webhook_url,
+                        "success",
+                        {
+                            "source": source,
+                            "policy_mode": decision.mode,
+                            "policy_reason": decision.reason,
+                            "response": response_meta,
+                        },
+                    )
+                    delivery = {"sent": True, "webhook_status": status_code}
+                    summary["delivery"] = delivery
+
+        if not summary.get("delivery"):
+            summary["delivery"] = delivery
+
+        db.mark_status(audit_id, "processed", summary=summary)
+        LOG.info(
+            "internal_trigger_processed audit_id=%s source=%s decision=%s delivery=%s",
+            audit_id,
+            source,
+            json.dumps(summary["decision"], ensure_ascii=False),
+            json.dumps(summary["delivery"], ensure_ascii=False),
+        )
+        return (
+            jsonify(
+                {
+                    "ok": True,
+                    "source": source,
+                    "decision": summary["decision"],
+                    "delivery": summary["delivery"],
+                    "audit_id": audit_id,
+                }
+            ),
+            200,
+        )
 
     @app.post("/hooks/todoist")
     def todoist_hook() -> Any:
