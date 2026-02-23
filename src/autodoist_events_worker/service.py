@@ -34,6 +34,25 @@ def create_app(config: EventsConfig) -> Flask:
     def health() -> Any:
         return jsonify({"ok": True})
 
+    @app.get("/oauth/callback")
+    def oauth_callback() -> Any:
+        # OAuth redirect landing endpoint used for Todoist app installation flow.
+        code_present = bool(request.args.get("code"))
+        state_present = bool(request.args.get("state"))
+        LOG.info(
+            "oauth_callback_received code_present=%s state_present=%s",
+            code_present,
+            state_present,
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "message": "Autodoist events worker OAuth callback received.",
+                "code_present": code_present,
+                "state_present": state_present,
+            }
+        ), 200
+
     @app.get("/api/events")
     def api_events() -> Any:
         if not _is_admin_allowed(config, request.headers.get("Authorization")):
