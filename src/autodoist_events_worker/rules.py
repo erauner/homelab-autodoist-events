@@ -189,6 +189,10 @@ class ReminderNotifyRule:
         task_desc = str(task.get("description") or "").strip()
         task_url = str(task.get("url") or "").strip()
         labels = task.get("labels") or []
+        labels_lc = {str(x).strip().lower() for x in labels if str(x).strip()}
+        has_focus = "focus" in labels_lc
+        if ctx.config.reminder_require_focus_label and not has_focus:
+            return [], {"reason": "focus_label_required", "task_id": event.task_id}
 
         project_id = event.project_id or (str(task.get("project_id")) if task.get("project_id") is not None else None)
         subtasks_direct = 0
@@ -246,6 +250,7 @@ class ReminderNotifyRule:
             "task_id": event.task_id,
             "reminder_id": event.reminder_id,
             "webhook_url_set": True,
+            "has_focus_label": has_focus,
             "comments_included": len(recent_comments),
             "direct_subtasks_open": subtasks_direct,
             "dry_run": ctx.config.dry_run,

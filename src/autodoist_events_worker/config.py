@@ -26,6 +26,7 @@ class EventsConfig:
     max_delete_subtasks: int = 200
     reminder_webhook_url: Optional[str] = None
     reminder_webhook_token: Optional[str] = None
+    reminder_require_focus_label: bool = False
     reminder_channel: str = "discord"
     reminder_to: Optional[str] = None
     admin_token: Optional[str] = None
@@ -86,6 +87,9 @@ class EventsConfig:
             max_delete_subtasks=int(os.getenv("AUTODOIST_EVENTS_MAX_DELETE_SUBTASKS", "200")),
             reminder_webhook_url=os.getenv("AUTODOIST_EVENTS_REMINDER_WEBHOOK_URL"),
             reminder_webhook_token=os.getenv("AUTODOIST_EVENTS_REMINDER_WEBHOOK_TOKEN"),
+            reminder_require_focus_label=parse_bool(
+                os.getenv("AUTODOIST_EVENTS_REMINDER_REQUIRE_FOCUS_LABEL"), False
+            ),
             reminder_channel=os.getenv("AUTODOIST_EVENTS_REMINDER_CHANNEL", "discord"),
             reminder_to=os.getenv("AUTODOIST_EVENTS_REMINDER_TO"),
             admin_token=args.admin_token or os.getenv("AUTODOIST_EVENTS_ADMIN_TOKEN"),
