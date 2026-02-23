@@ -1,9 +1,11 @@
 from autodoist_events_worker.config import EventsConfig
 from autodoist_events_worker.rules import (
+    ReminderNotifyRule,
     RecurringClearCommentsOnCompletionRule,
     RecurringPurgeSubtasksOnCompletionRule,
     RuleContext,
     TodoistWebhookEvent,
+    parse_event,
 )
 
 
@@ -12,7 +14,15 @@ class FakeTodoist:
         self.recurring = recurring
 
     def get_task(self, task_id: str):
-        return {"id": task_id, "due": {"is_recurring": self.recurring}}
+        return {
+            "id": task_id,
+            "content": "Focus task",
+            "description": "desc",
+            "url": f"https://app.todoist.com/app/task/{task_id}",
+            "labels": ["focus"],
+            "project_id": "p1",
+            "due": {"is_recurring": self.recurring},
+        }
 
     def list_comments_for_task(self, task_id: str):
         return [
@@ -130,3 +140,49 @@ def test_subtask_rule_respects_cap() -> None:
     actions, meta = rule.plan(ctx, event)
     assert len(actions) == 2
     assert meta["cap_hit"] is True
+
+
+def test_parse_event_reminder_uses_item_id_for_task() -> None:
+    payload = {
+        "event_name": "reminder:fired",
+        "event_data": {"id": "rem-1", "item_id": "task-9", "project_id": "p1"},
+        "user_id": 123,
+    }
+    event = parse_event(payload, "d1")
+    assert event.event_name == "reminder:fired"
+    assert event.task_id == "task-9"
+    assert event.reminder_id == "rem-1"
+
+
+def test_reminder_rule_plans_webhook_notification() -> None:
+    rule = ReminderNotifyRule()
+    cfg = EventsConfig(
+        todoist_api_token="x",
+        webhook_client_secret="y",
+        reminder_webhook_url="http://openclaw-main.ai.svc.cluster.local:18789/hooks/agent",
+        reminder_channel="discord",
+        reminder_to="user:123",
+    )
+    ctx = RuleContext(config=cfg, db=FakeDB(), todoist=FakeTodoist(recurring=True))
+    event = TodoistWebhookEvent(
+        delivery_id="d1",
+        event_name="reminder:fired",
+        user_id="u1",
+        triggered_at="2026-02-23T01:00:00Z",
+        task_id="parent",
+        project_id="p1",
+        update_intent=None,
+        reminder_id="rem-1",
+    )
+
+    assert rule.matches(event)
+    actions, meta = rule.plan(ctx, event)
+    assert len(actions) == 1
+    assert actions[0].action_type == "notify_webhook"
+    assert actions[0].target_type == "webhook"
+    assert "payload" in actions[0].meta
+    payload = actions[0].meta["payload"]
+    assert payload["channel"] == "discord"
+    assert payload["to"] == "user:123"
+    assert "Todoist reminder fired" in payload["message"]
+    assert meta["reminder_id"] == "rem-1"

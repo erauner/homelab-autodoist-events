@@ -17,12 +17,17 @@ class EventsConfig:
     dry_run: bool = False
     rule_recurring_clear_comments: bool = True
     rule_recurring_purge_subtasks: bool = False
+    rule_reminder_notify: bool = False
     allowed_user_ids: set[str] = field(default_factory=set)
     allowed_project_ids: set[str] = field(default_factory=set)
     denied_project_ids: set[str] = field(default_factory=set)
     keep_markers: tuple[str, ...] = ("[openclaw:plan]",)
     max_delete_comments: int = 200
     max_delete_subtasks: int = 200
+    reminder_webhook_url: Optional[str] = None
+    reminder_webhook_token: Optional[str] = None
+    reminder_channel: str = "discord"
+    reminder_to: Optional[str] = None
     admin_token: Optional[str] = None
     host: str = "0.0.0.0"
     port: int = 8081
@@ -70,12 +75,19 @@ class EventsConfig:
             rule_recurring_purge_subtasks=parse_bool(
                 os.getenv("AUTODOIST_EVENTS_RULE_RECURRING_PURGE_SUBTASKS"), False
             ),
+            rule_reminder_notify=parse_bool(
+                os.getenv("AUTODOIST_EVENTS_RULE_REMINDER_NOTIFY"), False
+            ),
             allowed_user_ids=parse_csv_set(os.getenv("AUTODOIST_EVENTS_ALLOWED_USER_IDS")),
             allowed_project_ids=parse_csv_set(os.getenv("AUTODOIST_EVENTS_ALLOWED_PROJECT_IDS")),
             denied_project_ids=parse_csv_set(os.getenv("AUTODOIST_EVENTS_DENIED_PROJECT_IDS")),
             keep_markers=keep_markers,
             max_delete_comments=int(os.getenv("AUTODOIST_EVENTS_MAX_DELETE_COMMENTS", "200")),
             max_delete_subtasks=int(os.getenv("AUTODOIST_EVENTS_MAX_DELETE_SUBTASKS", "200")),
+            reminder_webhook_url=os.getenv("AUTODOIST_EVENTS_REMINDER_WEBHOOK_URL"),
+            reminder_webhook_token=os.getenv("AUTODOIST_EVENTS_REMINDER_WEBHOOK_TOKEN"),
+            reminder_channel=os.getenv("AUTODOIST_EVENTS_REMINDER_CHANNEL", "discord"),
+            reminder_to=os.getenv("AUTODOIST_EVENTS_REMINDER_TO"),
             admin_token=args.admin_token or os.getenv("AUTODOIST_EVENTS_ADMIN_TOKEN"),
             host=args.host or os.getenv("AUTODOIST_EVENTS_HOST", "0.0.0.0"),
             port=args.port or int(os.getenv("AUTODOIST_EVENTS_PORT", "8081")),

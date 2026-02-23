@@ -70,6 +70,25 @@ class TodoistEventsClient:
         if resp.status_code not in (200, 204):
             resp.raise_for_status()
 
+    def post_webhook(
+        self,
+        *,
+        url: str,
+        payload: dict[str, Any],
+        bearer_token: str | None = None,
+    ) -> dict[str, Any]:
+        headers = {"Content-Type": "application/json"}
+        if bearer_token:
+            headers["Authorization"] = f"Bearer {bearer_token}"
+        resp = requests.post(url, json=payload, headers=headers, timeout=self.timeout_s)
+        resp.raise_for_status()
+        out: dict[str, Any] = {"status_code": resp.status_code}
+        try:
+            out["json"] = resp.json()
+        except Exception:
+            out["text"] = (resp.text or "")[:1000]
+        return out
+
     def exchange_oauth_code(
         self,
         *,

@@ -30,7 +30,8 @@ class TodoistWebhookEvent:
     task_id: str | None
     project_id: str | None
     update_intent: str | None
-    raw: dict[str, Any]
+    reminder_id: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 class Rule(Protocol):
@@ -169,11 +170,94 @@ class RecurringPurgeSubtasksOnCompletionRule:
         }
 
 
+class ReminderNotifyRule:
+    name = "reminder_notify"
+
+    def matches(self, event: TodoistWebhookEvent) -> bool:
+        return event.event_name == "reminder:fired" and event.task_id is not None
+
+    def plan(self, ctx: RuleContext, event: TodoistWebhookEvent) -> tuple[list[Action], dict[str, Any]]:
+        if event.task_id is None:
+            return [], {"reason": "missing_task_id"}
+        if not ctx.config.reminder_webhook_url:
+            return [], {"reason": "missing_webhook_url", "task_id": event.task_id}
+
+        task = ctx.todoist.get_task(event.task_id)
+        task_content = str(task.get("content") or "").strip()
+        task_desc = str(task.get("description") or "").strip()
+        task_url = str(task.get("url") or "").strip()
+        labels = task.get("labels") or []
+
+        project_id = event.project_id or (str(task.get("project_id")) if task.get("project_id") is not None else None)
+        subtasks_direct = 0
+        if project_id:
+            tasks = ctx.todoist.list_active_tasks_for_project(str(project_id))
+            subtasks_direct = sum(1 for t in tasks if str(t.get("parent_id") or "") == str(event.task_id))
+
+        comments = ctx.todoist.list_comments_for_task(event.task_id)
+        recent_comments = [str(c.get("content") or "").strip() for c in comments if str(c.get("content") or "").strip()]
+        recent_comments = recent_comments[-3:]
+        comments_block = "\n".join(f"- {c}" for c in recent_comments) if recent_comments else "- (none)"
+
+        message_parts = [
+            "Todoist reminder fired.",
+            f"Task: {task_content or event.task_id}",
+        ]
+        if task_desc:
+            message_parts.append(f"Description: {task_desc}")
+        if labels:
+            message_parts.append(f"Labels: {', '.join(str(x) for x in labels)}")
+        message_parts.append(f"Direct subtasks open: {subtasks_direct}")
+        message_parts.append(f"Recent comments:\n{comments_block}")
+        if task_url:
+            message_parts.append(f"Task URL: {task_url}")
+        message_parts.append("Please provide a concise nudge and next concrete step.")
+
+        payload: dict[str, Any] = {
+            "message": "\n".join(message_parts),
+            "name": "Todoist Reminder",
+            "deliver": True,
+            "channel": ctx.config.reminder_channel or "discord",
+            "meta": {
+                "source": "autodoist-events-worker",
+                "event_name": event.event_name,
+                "task_id": event.task_id,
+                "project_id": project_id,
+                "reminder_id": event.reminder_id,
+                "triggered_at": event.triggered_at,
+            },
+        }
+        if ctx.config.reminder_to:
+            payload["to"] = ctx.config.reminder_to
+
+        action = Action(
+            action_type="notify_webhook",
+            target_type="webhook",
+            target_id=ctx.config.reminder_webhook_url,
+            meta={
+                "task_id": event.task_id,
+                "event_name": event.event_name,
+                "payload": payload,
+            },
+        )
+        return [action], {
+            "task_id": event.task_id,
+            "reminder_id": event.reminder_id,
+            "webhook_url_set": True,
+            "comments_included": len(recent_comments),
+            "direct_subtasks_open": subtasks_direct,
+            "dry_run": ctx.config.dry_run,
+        }
+
+
 def parse_event(payload: dict[str, Any], delivery_id: str) -> TodoistWebhookEvent:
     event_name = str(payload.get("event_name") or payload.get("eventName") or "")
     event_data = payload.get("event_data") or {}
     event_data_extra = payload.get("event_data_extra") or {}
-    task_id = event_data.get("id")
+    if event_name == "reminder:fired":
+        task_id = event_data.get("item_id") or event_data.get("id")
+    else:
+        task_id = event_data.get("id") or event_data.get("item_id")
     project_id = event_data.get("project_id")
 
     return TodoistWebhookEvent(
@@ -184,5 +268,6 @@ def parse_event(payload: dict[str, Any], delivery_id: str) -> TodoistWebhookEven
         task_id=(str(task_id) if task_id is not None else None),
         project_id=(str(project_id) if project_id is not None else None),
         update_intent=event_data_extra.get("update_intent"),
+        reminder_id=(str(event_data.get("id")) if event_name == "reminder:fired" and event_data.get("id") is not None else None),
         raw=payload,
     )

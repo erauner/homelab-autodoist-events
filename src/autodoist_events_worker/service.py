@@ -10,6 +10,7 @@ from todoist_automation_shared import verify_todoist_signature
 from .config import EventsConfig
 from .db import EventsDB
 from .rules import (
+    ReminderNotifyRule,
     RecurringClearCommentsOnCompletionRule,
     RecurringPurgeSubtasksOnCompletionRule,
     RuleContext,
@@ -33,7 +34,7 @@ def create_app(config: EventsConfig) -> Flask:
     db = EventsDB(config.db_path, auto_commit=True)
     db.connect()
     todoist = TodoistEventsClient(config.todoist_api_token, timeout_s=config.timeout_s)
-    rules = [RecurringClearCommentsOnCompletionRule(), RecurringPurgeSubtasksOnCompletionRule()]
+    rules = [RecurringClearCommentsOnCompletionRule(), RecurringPurgeSubtasksOnCompletionRule(), ReminderNotifyRule()]
 
     @app.get("/health")
     def health() -> Any:
@@ -240,6 +241,8 @@ def create_app(config: EventsConfig) -> Flask:
                     continue
                 if not config.rule_recurring_purge_subtasks and rule.name == "recurring_purge_subtasks_on_completion":
                     continue
+                if not config.rule_reminder_notify and rule.name == "reminder_notify":
+                    continue
                 if not rule.matches(event):
                     continue
                 actions, plan_meta = rule.plan(ctx, event)
@@ -260,6 +263,25 @@ def create_app(config: EventsConfig) -> Flask:
                         todoist.delete_comment(action.target_id)
                     elif action.action_type == "delete_task":
                         todoist.delete_task(action.target_id)
+                    elif action.action_type == "notify_webhook":
+                        payload = action.meta.get("payload")
+                        if not isinstance(payload, dict):
+                            db.record_action(
+                                delivery_id,
+                                rule.name,
+                                action.action_type,
+                                action.target_type,
+                                action.target_id,
+                                "failed",
+                                {**action.meta, "reason": "missing_payload"},
+                            )
+                            continue
+                        response_meta = todoist.post_webhook(
+                            url=action.target_id,
+                            payload=payload,
+                            bearer_token=config.reminder_webhook_token,
+                        )
+                        action.meta = {**action.meta, "response": response_meta}
                     else:
                         db.record_action(
                             delivery_id,
