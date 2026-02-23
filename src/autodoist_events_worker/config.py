@@ -1,0 +1,70 @@
+import argparse
+import os
+from dataclasses import dataclass, field
+from typing import Optional, Sequence
+
+from todoist_automation_shared import parse_bool, parse_csv_set
+
+
+@dataclass(frozen=True)
+class EventsConfig:
+    todoist_api_token: str
+    webhook_client_secret: str
+    db_path: str = "events.sqlite"
+    enabled: bool = True
+    dry_run: bool = False
+    rule_recurring_clear_comments: bool = True
+    allowed_user_ids: set[str] = field(default_factory=set)
+    allowed_project_ids: set[str] = field(default_factory=set)
+    denied_project_ids: set[str] = field(default_factory=set)
+    keep_markers: tuple[str, ...] = ("[openclaw:plan]",)
+    max_delete_comments: int = 200
+    admin_token: Optional[str] = None
+    host: str = "0.0.0.0"
+    port: int = 8081
+    timeout_s: float = 10.0
+
+    @staticmethod
+    def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
+        parser = argparse.ArgumentParser(description="Autodoist events worker")
+        parser.add_argument("--api-key")
+        parser.add_argument("--webhook-secret")
+        parser.add_argument("--db-path")
+        parser.add_argument("--host")
+        parser.add_argument("--port", type=int)
+        parser.add_argument("--admin-token")
+        parser.add_argument("--timeout-s", type=float)
+        return parser.parse_args(argv)
+
+    @classmethod
+    def from_env_and_cli(cls, argv: Optional[Sequence[str]] = None) -> "EventsConfig":
+        args = cls._parse_args(argv)
+        api_key = args.api_key or os.getenv("TODOIST_API_KEY")
+        secret = args.webhook_secret or os.getenv("TODOIST_CLIENT_SECRET")
+        if not api_key:
+            raise ValueError("TODOIST_API_KEY (or --api-key) is required")
+        if not secret:
+            raise ValueError("TODOIST_CLIENT_SECRET (or --webhook-secret) is required")
+
+        markers = os.getenv("AUTODOIST_EVENTS_KEEP_MARKERS", "[openclaw:plan]")
+        keep_markers = tuple(x.strip() for x in markers.split(",") if x.strip())
+
+        return cls(
+            todoist_api_token=api_key,
+            webhook_client_secret=secret,
+            db_path=args.db_path or os.getenv("AUTODOIST_EVENTS_DB_PATH", "events.sqlite"),
+            enabled=parse_bool(os.getenv("AUTODOIST_EVENTS_ENABLED"), True),
+            dry_run=parse_bool(os.getenv("AUTODOIST_EVENTS_DRY_RUN"), False),
+            rule_recurring_clear_comments=parse_bool(
+                os.getenv("AUTODOIST_EVENTS_RULE_RECURRING_CLEAR_COMMENTS"), True
+            ),
+            allowed_user_ids=parse_csv_set(os.getenv("AUTODOIST_EVENTS_ALLOWED_USER_IDS")),
+            allowed_project_ids=parse_csv_set(os.getenv("AUTODOIST_EVENTS_ALLOWED_PROJECT_IDS")),
+            denied_project_ids=parse_csv_set(os.getenv("AUTODOIST_EVENTS_DENIED_PROJECT_IDS")),
+            keep_markers=keep_markers,
+            max_delete_comments=int(os.getenv("AUTODOIST_EVENTS_MAX_DELETE_COMMENTS", "200")),
+            admin_token=args.admin_token or os.getenv("AUTODOIST_EVENTS_ADMIN_TOKEN"),
+            host=args.host or os.getenv("AUTODOIST_EVENTS_HOST", "0.0.0.0"),
+            port=args.port or int(os.getenv("AUTODOIST_EVENTS_PORT", "8081")),
+            timeout_s=args.timeout_s or float(os.getenv("AUTODOIST_EVENTS_TIMEOUT_S", "10.0")),
+        )
