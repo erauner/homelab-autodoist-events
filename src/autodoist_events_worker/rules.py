@@ -1,5 +1,10 @@
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
+
+from todoist_core.models import PolicyConfig, PolicyInput, TaskContext
+from todoist_core.policy import evaluate_focus_policy
 
 from .config import EventsConfig
 from .db import EventsDB
@@ -191,8 +196,30 @@ class ReminderNotifyRule:
         labels = task.get("labels") or []
         labels_lc = {str(x).strip().lower() for x in labels if str(x).strip()}
         has_focus = "focus" in labels_lc
-        if ctx.config.reminder_require_focus_label and not has_focus:
-            return [], {"reason": "focus_label_required", "task_id": event.task_id}
+        task_ctx = TaskContext(
+            id=str(event.task_id),
+            content=task_content or str(event.task_id),
+            labels=tuple(labels_lc),
+            project_id=(str(task.get("project_id")) if task.get("project_id") is not None else None),
+        )
+        decision = evaluate_focus_policy(
+            PolicyInput(
+                source="reminder",
+                now_local=datetime.now(ZoneInfo("America/Chicago")),
+                focus_tasks=(),
+                next_action_tasks=(),
+                reminder_task=task_ctx,
+                # Keep reminder behavior parity with existing implementation:
+                # gate by focus requirement only; do not apply quiet-hour window here.
+                config=PolicyConfig(
+                    require_focus_for_reminder=ctx.config.reminder_require_focus_label,
+                    allowed_hour_start=0,
+                    allowed_hour_end=24,
+                ),
+            )
+        )
+        if not decision.should_notify:
+            return [], {"reason": decision.reason, "task_id": event.task_id, "mode": decision.mode}
 
         project_id = event.project_id or (str(task.get("project_id")) if task.get("project_id") is not None else None)
         subtasks_direct = 0
@@ -251,6 +278,8 @@ class ReminderNotifyRule:
             "reminder_id": event.reminder_id,
             "webhook_url_set": True,
             "has_focus_label": has_focus,
+            "policy_mode": decision.mode,
+            "policy_reason": decision.reason,
             "comments_included": len(recent_comments),
             "direct_subtasks_open": subtasks_direct,
             "dry_run": ctx.config.dry_run,

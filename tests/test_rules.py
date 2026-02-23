@@ -235,4 +235,4 @@ def test_reminder_rule_skips_without_focus_when_required() -> None:
     )
     actions, meta = rule.plan(ctx, event)
     assert actions == []
-    assert meta["reason"] == "focus_label_required"
+    assert meta["reason"] == "reminder_task_not_focused"

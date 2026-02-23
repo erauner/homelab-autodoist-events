@@ -10,6 +10,7 @@ authors = [
 dependencies = [
   "Flask>=3.0.0",
   "requests>=2.31.0",
+  "homelab-todoist-core==0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -35,3 +36,10 @@ addopts = "-v"
 dev = [
   "pytest>=8.0.0",
 ]
+
+[[tool.uv.index]]
+name = "nexus-pypi-hosted"
+url = "https://nexus.erauner.dev/repository/pypi-hosted/simple"
+
+[tool.uv.sources]
+homelab-todoist-core = { index = "nexus-pypi-hosted" }
