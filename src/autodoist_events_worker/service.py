@@ -54,7 +54,14 @@ def create_app(config: EventsConfig) -> Flask:
         raw = request.get_data(cache=False)
         sig = request.headers.get("X-Todoist-Hmac-SHA256", "")
         delivery_id = request.headers.get("X-Todoist-Delivery-ID", "")
+        LOG.info(
+            "webhook_received delivery_id=%s content_length=%s cf_ray=%s",
+            delivery_id or "<missing>",
+            len(raw),
+            request.headers.get("CF-Ray", ""),
+        )
         if not delivery_id:
+            LOG.warning("webhook_rejected reason=missing_delivery_id")
             return jsonify({"ok": False, "error": "missing_delivery_id"}), 400
 
         payload_sha256 = hashlib.sha256(raw).hexdigest()
@@ -71,6 +78,7 @@ def create_app(config: EventsConfig) -> Flask:
                 status="rejected_signature",
                 payload_sha256=payload_sha256,
             )
+            LOG.warning("webhook_rejected delivery_id=%s reason=invalid_signature", delivery_id)
             return jsonify({"ok": False, "error": "invalid_signature"}), 401
 
         try:
@@ -87,11 +95,22 @@ def create_app(config: EventsConfig) -> Flask:
                 status="bad_request",
                 payload_sha256=payload_sha256,
             )
+            LOG.warning("webhook_rejected delivery_id=%s reason=invalid_json", delivery_id)
             return jsonify({"ok": False, "error": "invalid_json"}), 400
 
         event = parse_event(payload, delivery_id)
         if not event.event_name:
+            LOG.warning("webhook_rejected delivery_id=%s reason=missing_event_name", delivery_id)
             return jsonify({"ok": False, "error": "missing_event_name"}), 400
+        LOG.info(
+            "webhook_parsed delivery_id=%s event_name=%s task_id=%s project_id=%s user_id=%s update_intent=%s",
+            delivery_id,
+            event.event_name,
+            event.task_id,
+            event.project_id,
+            event.user_id,
+            event.update_intent,
+        )
 
         is_new, receipt = db.upsert_receipt(
             delivery_id=delivery_id,
@@ -106,22 +125,31 @@ def create_app(config: EventsConfig) -> Flask:
         )
 
         if not is_new and receipt.get("status") == "processed":
+            LOG.info("webhook_duplicate delivery_id=%s status=processed", delivery_id)
             return jsonify({"ok": True, "delivery_id": delivery_id, "duplicate": True}), 200
 
         if not config.enabled:
             db.mark_status(delivery_id, "ignored_disabled", summary={"enabled": False})
+            LOG.info("webhook_ignored delivery_id=%s reason=disabled", delivery_id)
             return jsonify({"ok": True, "delivery_id": delivery_id, "status": "ignored_disabled"}), 200
 
         if config.allowed_user_ids and (event.user_id not in config.allowed_user_ids):
             db.mark_status(delivery_id, "ignored_allowlist", summary={"reason": "user_id"})
+            LOG.info("webhook_ignored delivery_id=%s reason=user_allowlist user_id=%s", delivery_id, event.user_id)
             return jsonify({"ok": True, "delivery_id": delivery_id, "status": "ignored_allowlist"}), 200
 
         if event.project_id and config.denied_project_ids and event.project_id in config.denied_project_ids:
             db.mark_status(delivery_id, "ignored_allowlist", summary={"reason": "denied_project"})
+            LOG.info("webhook_ignored delivery_id=%s reason=project_denylist project_id=%s", delivery_id, event.project_id)
             return jsonify({"ok": True, "delivery_id": delivery_id, "status": "ignored_allowlist"}), 200
 
         if config.allowed_project_ids and event.project_id not in config.allowed_project_ids:
             db.mark_status(delivery_id, "ignored_allowlist", summary={"reason": "project_id"})
+            LOG.info(
+                "webhook_ignored delivery_id=%s reason=project_allowlist project_id=%s",
+                delivery_id,
+                event.project_id,
+            )
             return jsonify({"ok": True, "delivery_id": delivery_id, "status": "ignored_allowlist"}), 200
 
         outcomes: list[dict[str, Any]] = []
@@ -162,8 +190,15 @@ def create_app(config: EventsConfig) -> Flask:
 
             if not outcomes:
                 db.mark_status(delivery_id, "processed", summary={"rules_triggered": 0})
+                LOG.info("webhook_processed delivery_id=%s rules_triggered=0", delivery_id)
             else:
                 db.mark_status(delivery_id, "processed", summary={"rules_triggered": len(outcomes), "outcomes": outcomes})
+                LOG.info(
+                    "webhook_processed delivery_id=%s rules_triggered=%s outcomes=%s",
+                    delivery_id,
+                    len(outcomes),
+                    json.dumps(outcomes, ensure_ascii=False),
+                )
             return jsonify({"ok": True, "delivery_id": delivery_id, "duplicate": False, "outcomes": outcomes}), 200
         except Exception as exc:  # transient failure path
             LOG.exception("Failed processing delivery_id=%s", delivery_id)
