@@ -303,6 +303,15 @@ def create_app(config: EventsConfig) -> Flask:
                         "success",
                         action.meta,
                     )
+                if (
+                    rule.name == "reminder_notify"
+                    and plan_meta.get("reason") == "reminder_task_not_focused"
+                ):
+                    LOG.info(
+                        "reminder_skipped_no_focus delivery_id=%s task_id=%s",
+                        delivery_id,
+                        plan_meta.get("task_id"),
+                    )
                 outcomes.append({"rule": rule.name, **plan_meta, "deleted": deleted})
 
             if not outcomes:

@@ -188,6 +188,8 @@ def test_reminder_rule_plans_webhook_notification() -> None:
     assert payload["to"] == "user:123"
     assert "Todoist reminder fired" in payload["message"]
     assert meta["reminder_id"] == "rem-1"
+    assert meta["policy_mode"] == "REMINDER_FOCUS"
+    assert meta["policy_reason"] == "focused_reminder_task"
 
 
 def test_reminder_rule_skips_when_token_missing() -> None:

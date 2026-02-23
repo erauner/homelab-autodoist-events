@@ -202,10 +202,14 @@ class ReminderNotifyRule:
             labels=tuple(labels_lc),
             project_id=(str(task.get("project_id")) if task.get("project_id") is not None else None),
         )
+        try:
+            now_local = datetime.now(ZoneInfo(ctx.config.reminder_timezone))
+        except Exception:
+            now_local = datetime.now(ZoneInfo("America/Chicago"))
         decision = evaluate_focus_policy(
             PolicyInput(
                 source="reminder",
-                now_local=datetime.now(ZoneInfo("America/Chicago")),
+                now_local=now_local,
                 focus_tasks=(),
                 next_action_tasks=(),
                 reminder_task=task_ctx,

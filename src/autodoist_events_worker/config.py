@@ -27,6 +27,7 @@ class EventsConfig:
     reminder_webhook_url: Optional[str] = None
     reminder_webhook_token: Optional[str] = None
     reminder_require_focus_label: bool = False
+    reminder_timezone: str = "America/Chicago"
     reminder_channel: str = "discord"
     reminder_to: Optional[str] = None
     admin_token: Optional[str] = None
@@ -90,6 +91,7 @@ class EventsConfig:
             reminder_require_focus_label=parse_bool(
                 os.getenv("AUTODOIST_EVENTS_REMINDER_REQUIRE_FOCUS_LABEL"), False
             ),
+            reminder_timezone=os.getenv("AUTODOIST_EVENTS_REMINDER_TIMEZONE", "America/Chicago"),
             reminder_channel=os.getenv("AUTODOIST_EVENTS_REMINDER_CHANNEL", "discord"),
             reminder_to=os.getenv("AUTODOIST_EVENTS_REMINDER_TO"),
             admin_token=args.admin_token or os.getenv("AUTODOIST_EVENTS_ADMIN_TOKEN"),
