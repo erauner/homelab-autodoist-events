@@ -9,7 +9,12 @@ from todoist_automation_shared import verify_todoist_signature
 
 from .config import EventsConfig
 from .db import EventsDB
-from .rules import RecurringClearCommentsOnCompletionRule, RuleContext, parse_event
+from .rules import (
+    RecurringClearCommentsOnCompletionRule,
+    RecurringPurgeSubtasksOnCompletionRule,
+    RuleContext,
+    parse_event,
+)
 from .todoist_client import TodoistEventsClient
 
 LOG = logging.getLogger(__name__)
@@ -28,7 +33,7 @@ def create_app(config: EventsConfig) -> Flask:
     db = EventsDB(config.db_path, auto_commit=True)
     db.connect()
     todoist = TodoistEventsClient(config.todoist_api_token, timeout_s=config.timeout_s)
-    rules = [RecurringClearCommentsOnCompletionRule()]
+    rules = [RecurringClearCommentsOnCompletionRule(), RecurringPurgeSubtasksOnCompletionRule()]
 
     @app.get("/health")
     def health() -> Any:
@@ -233,6 +238,8 @@ def create_app(config: EventsConfig) -> Flask:
             for rule in rules:
                 if not config.rule_recurring_clear_comments and rule.name == "recurring_clear_comments_on_completion":
                     continue
+                if not config.rule_recurring_purge_subtasks and rule.name == "recurring_purge_subtasks_on_completion":
+                    continue
                 if not rule.matches(event):
                     continue
                 actions, plan_meta = rule.plan(ctx, event)
@@ -249,7 +256,21 @@ def create_app(config: EventsConfig) -> Flask:
                             {**action.meta, "reason": "dry_run"},
                         )
                         continue
-                    todoist.delete_comment(action.target_id)
+                    if action.action_type == "delete_comment":
+                        todoist.delete_comment(action.target_id)
+                    elif action.action_type == "delete_task":
+                        todoist.delete_task(action.target_id)
+                    else:
+                        db.record_action(
+                            delivery_id,
+                            rule.name,
+                            action.action_type,
+                            action.target_type,
+                            action.target_id,
+                            "failed",
+                            {**action.meta, "reason": "unknown_action_type"},
+                        )
+                        continue
                     deleted += 1
                     db.record_action(
                         delivery_id,

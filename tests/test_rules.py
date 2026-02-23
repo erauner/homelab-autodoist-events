@@ -1,5 +1,10 @@
 from autodoist_events_worker.config import EventsConfig
-from autodoist_events_worker.rules import RecurringClearCommentsOnCompletionRule, RuleContext, TodoistWebhookEvent
+from autodoist_events_worker.rules import (
+    RecurringClearCommentsOnCompletionRule,
+    RecurringPurgeSubtasksOnCompletionRule,
+    RuleContext,
+    TodoistWebhookEvent,
+)
 
 
 class FakeTodoist:
@@ -13,6 +18,14 @@ class FakeTodoist:
         return [
             {"id": "1", "content": "[openclaw:plan] keep this"},
             {"id": "2", "content": "delete me"},
+        ]
+
+    def list_active_tasks_for_project(self, project_id: str):
+        return [
+            {"id": "parent", "project_id": project_id, "parent_id": None},
+            {"id": "c1", "project_id": project_id, "parent_id": "parent"},
+            {"id": "c2", "project_id": project_id, "parent_id": "parent"},
+            {"id": "gc1", "project_id": project_id, "parent_id": "c1"},
         ]
 
 
@@ -71,3 +84,49 @@ def test_rule_plan_keeps_markers_and_deletes_others() -> None:
     assert len(actions) == 1
     assert actions[0].target_id == "2"
     assert meta["kept_count"] == 1
+
+
+def test_subtask_rule_plans_recursive_deletes() -> None:
+    rule = RecurringPurgeSubtasksOnCompletionRule()
+    cfg = _config()
+    ctx = RuleContext(config=cfg, db=FakeDB(), todoist=FakeTodoist(recurring=True))
+    event = TodoistWebhookEvent(
+        delivery_id="d1",
+        event_name="item:completed",
+        user_id="u1",
+        triggered_at=None,
+        task_id="parent",
+        project_id="p1",
+        update_intent="item_completed",
+        raw={},
+    )
+    actions, meta = rule.plan(ctx, event)
+    assert len(actions) == 3
+    assert sorted(a.target_id for a in actions) == ["c1", "c2", "gc1"]
+    assert all(a.action_type == "delete_task" for a in actions)
+    assert meta["subtasks_found"] == 3
+    assert meta["delete_count"] == 3
+
+
+def test_subtask_rule_respects_cap() -> None:
+    rule = RecurringPurgeSubtasksOnCompletionRule()
+    cfg = _config()
+    cfg = EventsConfig(
+        todoist_api_token=cfg.todoist_api_token,
+        webhook_client_secret=cfg.webhook_client_secret,
+        max_delete_subtasks=2,
+    )
+    ctx = RuleContext(config=cfg, db=FakeDB(), todoist=FakeTodoist(recurring=True))
+    event = TodoistWebhookEvent(
+        delivery_id="d1",
+        event_name="item:completed",
+        user_id="u1",
+        triggered_at=None,
+        task_id="parent",
+        project_id="p1",
+        update_intent="item_completed",
+        raw={},
+    )
+    actions, meta = rule.plan(ctx, event)
+    assert len(actions) == 2
+    assert meta["cap_hit"] is True
